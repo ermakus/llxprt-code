@@ -30,6 +30,19 @@ Get started immediately with powerful LLM options:
 /model claude-sonnet-4-5
 ```
 
+### Russian Providers
+
+```bash
+# GigaChat (Sber)
+export GIGACHAT_API_KEY="your-api-key"
+llxprt --provider gigachat
+
+# Yandex Cloud YandexGPT
+export YANDEX_API_KEY="your-api-key"
+export YANDEX_FOLDER="your-folder-id"
+llxprt --provider yandex
+```
+
 ## Why Choose LLxprt Code?
 
 - **Free Tier Support**: Start coding immediately with Gemini, Qwen, or your existing Claude account
