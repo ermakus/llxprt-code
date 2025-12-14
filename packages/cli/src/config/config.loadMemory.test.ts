@@ -132,6 +132,11 @@ const createRuntimeState = () => ({
       .mockResolvedValue([
         { id: 'hf:zai-org/GLM-4.6', name: 'hf:zai-org/GLM-4.6' },
       ]),
+    getProviderByName: vi.fn(() => ({
+      name: 'openai',
+      getDefaultModel: () => 'hf:zai-org/GLM-4.6',
+      getCurrentModel: () => 'hf:zai-org/GLM-4.6',
+    })),
   },
   oauthManager: null,
 });

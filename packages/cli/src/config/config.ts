@@ -61,8 +61,7 @@ import {
   switchActiveProvider,
 } from '../runtime/runtimeSettings.js';
 import { applyCliSetArguments } from './cliEphemeralSettings.js';
-
-import { loadProviderAliasEntries } from '../providers/providerAliases.js';
+import { resolveEnvVarsInObject } from '../utils/envVarResolver.js';
 
 const LLXPRT_DIR = '.llxprt';
 
@@ -781,7 +780,9 @@ export async function loadCliConfig(
   // Check for both null and undefined since tests may not set this field
   if (bootstrapArgs.profileJson != null) {
     try {
-      const profile = JSON.parse(bootstrapArgs.profileJson) as Profile;
+      const parsedProfile = JSON.parse(bootstrapArgs.profileJson) as Profile;
+      // Apply environment variable substitution to all string fields in the profile
+      const profile = resolveEnvVarsInObject(parsedProfile);
       loadedProfile = profile;
 
       const prepared = prepareProfileForApplication(
@@ -833,7 +834,9 @@ export async function loadCliConfig(
   if (profileToLoad) {
     try {
       const profileManager = new ProfileManager();
-      const profile = await profileManager.loadProfile(profileToLoad);
+      const loadedProfileData = await profileManager.loadProfile(profileToLoad);
+      // Apply environment variable substitution to all string fields in the profile
+      const profile = resolveEnvVarsInObject(loadedProfileData);
       loadedProfile = profile;
 
       const prepared = prepareProfileForApplication(
@@ -1099,7 +1102,7 @@ export async function loadCliConfig(
   const sandboxConfig = await loadSandboxConfig(effectiveSettings, argv);
 
   // Handle provider selection FIRST with proper precedence
-  // Priority: CLI arg > Profile > Environment > Default
+  // Priority: CLI arg > Profile > Environment > API Key presence > Default
   let finalProvider: string;
   if (argv.provider) {
     finalProvider = argv.provider;
@@ -1108,6 +1111,9 @@ export async function loadCliConfig(
     finalProvider = profileProvider;
   } else if (process.env.LLXPRT_DEFAULT_PROVIDER) {
     finalProvider = process.env.LLXPRT_DEFAULT_PROVIDER;
+  } else if (process.env.GIGACHAT_API_KEY) {
+    // Auto-select GigaChat when its API key is set
+    finalProvider = 'gigachat';
   } else {
     finalProvider = 'gemini';
   }
@@ -1117,21 +1123,23 @@ export async function loadCliConfig(
       `Provider selection: argv=${argv.provider}, profile=${profileProvider}, env=${process.env.LLXPRT_DEFAULT_PROVIDER}, final=${finalProvider}`,
   );
 
-  // If provider is a known alias with defaultModel, use it as a fallback when no model is otherwise specified.
-  // This prevents `model.missing` during Config construction for non-gemini providers.
-  const aliasDefaultModel = (() => {
-    try {
-      const entry = loadProviderAliasEntries().find(
-        (candidate: { alias: string }) => candidate.alias === finalProvider,
-      );
-      const candidate = entry?.config?.defaultModel;
-      return typeof candidate === 'string' && candidate.trim()
-        ? candidate.trim()
-        : undefined;
-    } catch {
-      return undefined;
+  // Handle model selection with proper precedence
+  // Model defaults are configured via settings.json (settings.model) or environment variables
+  // (LLXPRT_DEFAULT_MODEL, GEMINI_MODEL). Provider-specific defaults should be set in
+  // settings.json or via profiles with env var substitution (e.g., model: "${MY_MODEL}")
+  // Fall back to provider's default model, then to DEFAULT_GEMINI_MODEL
+  const getProviderDefaultModel = (): string => {
+    const provider =
+      runtimeState.providerManager?.getProviderByName(finalProvider);
+    if (provider) {
+      // Use getCurrentModel if available (may have ephemeral overrides), otherwise getDefaultModel
+      if (provider.getCurrentModel) {
+        return provider.getCurrentModel();
+      }
+      return provider.getDefaultModel();
     }
-  })();
+    return DEFAULT_GEMINI_MODEL;
+  };
 
   const finalModel: string =
     argv.model ||
@@ -1139,10 +1147,7 @@ export async function loadCliConfig(
     effectiveSettings.model ||
     process.env.LLXPRT_DEFAULT_MODEL ||
     process.env.GEMINI_MODEL ||
-    // If no model specified and provider is gemini, use the Gemini default
-    (finalProvider === 'gemini'
-      ? DEFAULT_GEMINI_MODEL
-      : aliasDefaultModel || '');
+    getProviderDefaultModel();
 
   // Ensure SettingsService reflects the selected model so Config#getModel picks it up
   if (finalModel && finalModel.trim() !== '') {
