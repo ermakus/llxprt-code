@@ -522,6 +522,7 @@ export class ProviderManager implements IProviderManager {
       'openai-responses',
       'anthropic',
       'openaivercel',
+      'gigachat', // GigaChat SDK handles baseURL internally
       'load-balancer', // Resolves baseURL at request time via sub-profile selection
     ]);
     if (!resolved.baseURL && !baseUrlOptionalProviders.has(targetProvider)) {

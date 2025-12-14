@@ -207,6 +207,7 @@ export { getOpenAIProviderInfo } from './providers/openai/getOpenAIProviderInfo.
 export { OpenAIVercelProvider } from './providers/openai-vercel/index.js';
 export { AnthropicProvider } from './providers/anthropic/AnthropicProvider.js';
 export { GeminiProvider } from './providers/gemini/GeminiProvider.js';
+export { GigaChatProvider } from './providers/gigachat/GigaChatProvider.js';
 export * from './providers/ProviderManager.js';
 export * from './providers/errors.js';
 export {

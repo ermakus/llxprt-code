@@ -123,6 +123,7 @@
     "ajv-formats": "^3.0.1",
     "execa": "^9.6.0",
     "fast-uri": "^3.0.6",
+    "gigachat": "^0.0.17",
     "openai": "^5.10.1",
     "path-scurry": "^2.0.0",
     "simple-git": "^3.28.0",
