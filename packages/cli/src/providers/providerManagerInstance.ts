@@ -851,10 +851,10 @@ function createOpenAIVercelAliasProvider(
   );
 
   if (
-    entry.config.defaultModel &&
+    aliasProviderConfig.defaultModel &&
     typeof provider.getDefaultModel === 'function'
   ) {
-    const configuredDefaultModel = entry.config.defaultModel;
+    const configuredDefaultModel = aliasProviderConfig.defaultModel;
     const originalGetDefaultModel = provider.getDefaultModel.bind(provider);
     provider.getDefaultModel = () =>
       configuredDefaultModel || originalGetDefaultModel();
