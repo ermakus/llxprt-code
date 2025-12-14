@@ -69,25 +69,24 @@ Technology preferences when unspecified:
 
 # Examples
 
-<example>
-user: find all typescript files
-assistant: <use glob with pattern "**/*.ts">
-</example>
+Example 1 - Finding files:
 
-<example>
-user: read the config file
-assistant: I'll read the configuration file.
-<use read_file with absolute_path "/path/to/project/config.json">
-</example>
+- User asks: "find all typescript files"
+- Assistant calls the `glob` tool with `{"pattern": "**/*.ts"}`
 
-<example>
-user: update the database connection string
-assistant: I'll search for the database configuration first.
-<use grep with pattern "database|connection|db_url">
-[After finding the file]
-<use read_file to examine the current configuration>
-<use replace to update the connection string>
-</example>
+Example 2 - Reading a file:
+
+- User asks: "read the config file"
+- Assistant responds: "I'll read the configuration file."
+- Assistant calls the `read_file` tool with `{"absolute_path": "/path/to/project/config.json"}`
+
+Example 3 - Multi-step task:
+
+- User asks: "update the database connection string"
+- Assistant responds: "I'll search for the database configuration first."
+- Assistant calls `search_file_content` with `{"pattern": "database|connection|db_url"}`
+- After finding the file, assistant calls `read_file` to examine the current configuration
+- Then assistant calls `replace` to update the connection string
 
 # Response Guidelines
 
