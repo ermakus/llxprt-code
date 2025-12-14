@@ -12,6 +12,7 @@ import {
   OpenAIVercelProvider,
   AnthropicProvider,
   GeminiProvider,
+  GigaChatProvider,
   sanitizeForByteString,
   needsSanitization,
   SettingsService,
@@ -410,7 +411,20 @@ export function createProviderManager(
     addItem,
   );
 
-  manager.setActiveProvider('gemini');
+  // Register GigaChat provider
+  manager.registerProvider(getGigaChatProvider(authOnlyEnabled));
+
+  // Set default provider: GigaChat if GIGACHAT_API_KEY is set, otherwise Gemini
+  const hasGigaChatKey = !!process.env.GIGACHAT_API_KEY;
+  const defaultProvider = hasGigaChatKey ? 'gigachat' : 'gemini';
+  if (process.env.DEBUG || process.env.VERBOSE) {
+    console.log('[ProviderManager] Default provider selection:', {
+      hasGigaChatKey,
+      defaultProvider,
+      gigaChatKeyLength: process.env.GIGACHAT_API_KEY?.length ?? 0,
+    });
+  }
+  manager.setActiveProvider(defaultProvider);
   attachAddItemToOAuthProviders(oauthManager, addItem);
 
   const openAIContext: OpenAIRegistrationContext = {
@@ -609,6 +623,49 @@ function bindProviderAliasIdentity(provider: unknown, alias: string): void {
   });
 }
 
+/**
+ * Substitute ${PLACEHOLDER} patterns in a string using env var mappings.
+ */
+function substituteEnvVars(
+  value: string,
+  envVars: Record<string, string>,
+): string {
+  let result = value;
+  for (const [placeholder, envName] of Object.entries(envVars)) {
+    const envValue = process.env[envName];
+    if (envValue) {
+      result = result.replace(
+        new RegExp(`\\$\\{${placeholder}\\}`, 'g'),
+        envValue,
+      );
+    }
+  }
+  return result;
+}
+
+/**
+ * Deep substitute env vars in an object.
+ */
+function substituteEnvVarsInObject(
+  obj: Record<string, unknown>,
+  envVars: Record<string, string>,
+): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (typeof value === 'string') {
+      result[key] = substituteEnvVars(value, envVars);
+    } else if (value && typeof value === 'object' && !Array.isArray(value)) {
+      result[key] = substituteEnvVarsInObject(
+        value as Record<string, unknown>,
+        envVars,
+      );
+    } else {
+      result[key] = value;
+    }
+  }
+  return result;
+}
+
 function createOpenAIAliasProvider(
   entry: ProviderAliasEntry,
   openaiApiKey: string | undefined,
@@ -624,17 +681,27 @@ function createOpenAIAliasProvider(
     return null;
   }
 
+  // Build env var substitution map
+  const envVars = entry.config.envVars || {};
+
   const aliasProviderConfig: IProviderConfig = {
     ...openaiProviderConfig,
     baseUrl: resolvedBaseUrl,
   };
 
   if (entry.config.providerConfig) {
-    Object.assign(aliasProviderConfig, entry.config.providerConfig);
+    const substitutedConfig = substituteEnvVarsInObject(
+      entry.config.providerConfig,
+      envVars,
+    );
+    Object.assign(aliasProviderConfig, substitutedConfig);
   }
 
   if (entry.config.defaultModel) {
-    aliasProviderConfig.defaultModel = entry.config.defaultModel;
+    aliasProviderConfig.defaultModel = substituteEnvVars(
+      entry.config.defaultModel,
+      envVars,
+    );
   }
 
   let aliasApiKey: string | undefined;
@@ -656,10 +723,10 @@ function createOpenAIAliasProvider(
   );
 
   if (
-    entry.config.defaultModel &&
+    aliasProviderConfig.defaultModel &&
     typeof provider.getDefaultModel === 'function'
   ) {
-    const configuredDefaultModel = entry.config.defaultModel;
+    const configuredDefaultModel = aliasProviderConfig.defaultModel;
     const originalGetDefaultModel = provider.getDefaultModel.bind(provider);
     provider.getDefaultModel = () =>
       configuredDefaultModel || originalGetDefaultModel();
@@ -848,4 +915,19 @@ function getAnthropicProvider(
     oauthManager,
   );
   return anthropicProvider;
+}
+
+function getGigaChatProvider(authOnlyEnabled: boolean): GigaChatProvider {
+  let gigaChatApiKey: string | undefined;
+
+  if (!authOnlyEnabled && process.env.GIGACHAT_API_KEY) {
+    gigaChatApiKey = sanitizeApiKey(process.env.GIGACHAT_API_KEY);
+  }
+
+  const gigaChatBaseUrl = process.env.GIGACHAT_BASE_URL;
+  const gigaChatProvider = new GigaChatProvider(
+    gigaChatApiKey || undefined,
+    gigaChatBaseUrl,
+  );
+  return gigaChatProvider;
 }

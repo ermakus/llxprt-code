@@ -12,7 +12,7 @@ const shouldSkipHarness =
   (process.env.CI === 'true' ||
     skipVar === '1' ||
     skipVar === 'true' ||
-    (process.platform === 'linux' && process.env.CI === 'true'));
+    process.platform === 'linux');
 
 if (shouldSkipHarness) {
   console.warn(

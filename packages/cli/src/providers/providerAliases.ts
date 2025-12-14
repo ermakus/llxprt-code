@@ -37,6 +37,13 @@ export interface ProviderAliasConfig {
   description?: string;
   providerConfig?: Record<string, unknown>;
   apiKeyEnv?: string;
+  /**
+   * Environment variable mappings for template substitution.
+   * Keys are placeholder names, values are env var names.
+   * Use ${PLACEHOLDER} in defaultModel and providerConfig values.
+   * Example: { "FOLDER_ID": "YANDEX_FOLDER" } allows using ${FOLDER_ID} in config.
+   */
+  envVars?: Record<string, string>;
 }
 
 export interface ProviderAliasEntry {
