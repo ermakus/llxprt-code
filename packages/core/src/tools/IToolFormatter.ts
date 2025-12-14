@@ -30,6 +30,7 @@ export type ToolFormat =
   | 'qwen'
   | 'kimi'
   | 'mistral'
+  | 'yandex'
   | 'hermes'
   | 'xml'
   | 'llama'

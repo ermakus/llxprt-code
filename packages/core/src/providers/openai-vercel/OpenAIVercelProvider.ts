@@ -38,7 +38,12 @@ import { createOpenAI } from '@ai-sdk/openai';
 import { type IContent } from '../../services/history/IContent.js';
 import { type IProviderConfig } from '../types/IProviderConfig.js';
 import { type ToolFormat } from '../../tools/IToolFormatter.js';
-import { isKimiModel, isMistralModel } from '../../tools/ToolIdStrategy.js';
+import {
+  isKimiModel,
+  isMistralModel,
+  isYandexEndpoint,
+  getToolIdStrategy,
+} from '../../tools/ToolIdStrategy.js';
 import {
   BaseProvider,
   type NormalizedGenerateChatOptions,
@@ -60,7 +65,6 @@ import { type IProvider } from '../IProvider.js';
 import { getCoreSystemPromptAsync } from '../../core/prompts.js';
 import { resolveUserMemory } from '../utils/userMemory.js';
 import { convertToVercelMessages } from './messageConversion.js';
-import { getToolIdStrategy } from '../../tools/ToolIdStrategy.js';
 import { resolveRuntimeAuthToken } from '../utils/authToken.js';
 import { filterOpenAIRequestParams } from '../openai/openaiRequestParams.js';
 import { isLocalEndpoint } from '../utils/localEndpoint.js';
@@ -501,8 +505,11 @@ export class OpenAIVercelProvider extends BaseProvider implements IProvider {
     // Create a ToolIdMapper based on the tool format
     // For Kimi K2, this generates sequential IDs in the format functions.{name}:{index}
     // For Mistral, this generates 9-char alphanumeric IDs
+    // For Yandex, this uses the tool name as the ID
     const toolIdMapper =
-      toolFormat === 'kimi' || toolFormat === 'mistral'
+      toolFormat === 'kimi' ||
+      toolFormat === 'mistral' ||
+      toolFormat === 'yandex'
         ? getToolIdStrategy(toolFormat).createMapper(contents)
         : undefined;
 
@@ -1836,7 +1843,17 @@ export class OpenAIVercelProvider extends BaseProvider implements IProvider {
    */
   private detectToolFormat(): ToolFormat {
     const modelName = this.getModel() || this.getDefaultModel();
+    const baseUrl = this.getBaseURL();
     const logger = new DebugLogger('llxprt:provider:openaivercel');
+
+    // Check for Yandex Cloud (requires tool_call_id to match function name)
+    if (isYandexEndpoint(baseUrl, modelName)) {
+      logger.debug(
+        () =>
+          `Auto-detected 'yandex' format for Yandex endpoint: ${baseUrl}, model: ${modelName}`,
+      );
+      return 'yandex';
+    }
 
     // Check for Kimi K2 models (requires special ID format: functions.{name}:{index})
     if (isKimiModel(modelName)) {

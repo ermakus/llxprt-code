@@ -256,6 +256,67 @@ export const mistralStrategy: ToolIdStrategy = {
 };
 
 /**
+ * Yandex strategy: Uses the tool name as the ID
+ *
+ * Yandex Cloud's OpenAI-compatible API expects the tool_call_id to match
+ * the function name exactly. When validating tool responses, Yandex uses
+ * tool_call_id as the lookup key for the function name.
+ *
+ * This strategy maps internal IDs to tool names and back.
+ */
+export const yandexStrategy: ToolIdStrategy = {
+  createMapper(contents: IContent[]): ToolIdMapper {
+    // Build a map of internal ID -> tool name
+    const idToToolName = new Map<string, string>();
+
+    // Scan all tool calls in the conversation
+    for (const content of contents) {
+      if (content.speaker !== 'ai') continue;
+
+      for (const block of content.blocks) {
+        if (isToolCallBlock(block)) {
+          idToToolName.set(block.id, block.name);
+        }
+      }
+    }
+
+    return {
+      resolveToolCallId(tc: ToolCallBlock): string {
+        // Use the tool name as the ID for Yandex
+        return tc.name;
+      },
+
+      resolveToolResponseId(tr: ToolResponseBlock): string {
+        // Look up the tool name from the original tool call
+        const toolName = idToToolName.get(tr.callId);
+        if (toolName) {
+          return toolName;
+        }
+        // Fallback: use the toolName from the response itself
+        return tr.toolName;
+      },
+    };
+  },
+};
+
+/**
+ * Checks if a base URL or model indicates Yandex Cloud API
+ *
+ * @param baseUrl - The base URL being used
+ * @param model - The model name (optional)
+ * @returns true if this is a Yandex endpoint
+ */
+export function isYandexEndpoint(baseUrl?: string, model?: string): boolean {
+  if (baseUrl && baseUrl.includes('yandex')) {
+    return true;
+  }
+  if (model && (model.includes('yandex') || model.startsWith('gpt://'))) {
+    return true;
+  }
+  return false;
+}
+
+/**
  * Gets the appropriate tool ID strategy for a given tool format
  *
  * @param format - The tool format being used
@@ -267,6 +328,9 @@ export function getToolIdStrategy(format: ToolFormat): ToolIdStrategy {
   }
   if (format === 'mistral') {
     return mistralStrategy;
+  }
+  if (format === 'yandex') {
+    return yandexStrategy;
   }
   return standardStrategy;
 }

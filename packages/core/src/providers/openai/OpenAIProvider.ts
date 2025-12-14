@@ -31,6 +31,7 @@ import { type ToolFormat } from '../../tools/IToolFormatter.js';
 import {
   isKimiModel,
   isMistralModel,
+  isYandexEndpoint,
   getToolIdStrategy,
   type ToolIdMapper,
 } from '../../tools/ToolIdStrategy.js';
@@ -1335,8 +1336,11 @@ export class OpenAIProvider extends BaseProvider implements IProvider {
     // Create a ToolIdMapper based on the tool format
     // For Kimi K2, this generates sequential IDs in the format functions.{name}:{index}
     // For Mistral, this generates 9-char alphanumeric IDs
+    // For Yandex, this uses the tool name as the ID
     const toolIdMapper: ToolIdMapper | null =
-      toolFormat === 'kimi' || toolFormat === 'mistral'
+      toolFormat === 'kimi' ||
+      toolFormat === 'mistral' ||
+      toolFormat === 'yandex'
         ? getToolIdStrategy(toolFormat).createMapper(filteredContents)
         : null;
 
@@ -4784,12 +4788,22 @@ export class OpenAIProvider extends BaseProvider implements IProvider {
 
   /**
    * Detects the tool call format based on the model being used
-   * @returns The detected tool format ('openai', 'qwen', or 'kimi')
+   * @returns The detected tool format ('openai', 'qwen', 'kimi', 'yandex', etc.)
    */
   private detectToolFormat(): ToolFormat {
     // Auto-detect based on model name if set to 'auto' or not set
     const modelName = this.getModel() || this.getDefaultModel();
+    const baseUrl = this.getBaseURL();
     const logger = new DebugLogger('llxprt:provider:openai');
+
+    // Check for Yandex Cloud (requires tool_call_id to match function name)
+    if (isYandexEndpoint(baseUrl, modelName)) {
+      logger.debug(
+        () =>
+          `Auto-detected 'yandex' format for Yandex endpoint: ${baseUrl}, model: ${modelName}`,
+      );
+      return 'yandex';
+    }
 
     // Check for Kimi K2 models (requires special ID format: functions.{name}:{index})
     if (isKimiModel(modelName)) {
