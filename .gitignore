@@ -82,3 +82,6 @@ tmp-*
 
 # GHA credentials
 gha-creds-*.json
+.aider*
+
+project-plans

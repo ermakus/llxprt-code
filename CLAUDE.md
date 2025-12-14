@@ -1,5 +1,9 @@
 # Project Guidelines for Claude
 
+## Workflow
+
+- Use `node ./scripts/start.js --prompt "Examine and describe project"` to test your changes quickly
+
 ## Code Quality Rules
 
 ### TypeScript
