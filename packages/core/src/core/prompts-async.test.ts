@@ -180,11 +180,12 @@ describe('prompts async integration', () => {
       const prompt = await callPrompt();
 
       // Check for tool references that are substituted in core.md template
-      // core.md only mentions: ${GrepTool.Name}, ${GlobTool.Name}, ${ReadFileTool.Name}, ${ReadManyFilesTool.Name}
-      expect(prompt).toContain('Glob');
-      expect(prompt).toContain('Grep');
-      expect(prompt).toContain('ReadFile');
-      expect(prompt).toContain('ReadManyFiles');
+      // core.md uses ${GrepTool.Name}, ${GlobTool.Name}, ${ReadFileTool.Name}, ${ReadManyFilesTool.Name}
+      // These resolve to the static Name properties of the tool classes
+      expect(prompt).toContain('glob');
+      expect(prompt).toContain('search_file_content');
+      expect(prompt).toContain('read_file');
+      expect(prompt).toContain('read_many_files');
     });
 
     it('should properly format user memory with separator', async () => {

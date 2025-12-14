@@ -5,11 +5,36 @@ import {
   type PromptContext,
 } from './types.js';
 
+// Import all exports from the core module as a namespace for ${ClassName.Property} substitution
+import * as CoreExports from '../index.js';
+
+/**
+ * Get a static property from an exported class in the core module.
+ * Supports ${ClassName.Property} syntax in templates.
+ */
+function getClassProperty(
+  className: string,
+  property: string,
+): string | undefined {
+  const classRef = (CoreExports as Record<string, unknown>)[className];
+  if (!classRef || typeof classRef !== 'function') {
+    return undefined;
+  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const value = (classRef as any)[property];
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  return String(value);
+}
+
 /**
  * TemplateEngine - Handles variable substitution in prompt templates
  *
  * Implements REQ-004: Template Processing requirements
- * - Supports {{VARIABLE_NAME}} syntax
+ * - Supports {{VARIABLE_NAME}} syntax for standard variables
+ * - Supports ${ClassName.Property} syntax for class static properties
+ *   (e.g., ${GrepTool.Name} resolves to the static Name property)
  * - Substitutes TOOL_NAME, MODEL, and PROVIDER variables
  * - Handles malformed templates gracefully
  * - Logs substitutions when DEBUG=1 (REQ-010.4)
@@ -107,7 +132,45 @@ export class TemplateEngine {
       currentPosition = closeBracketPos + 2;
     }
 
+    // Step 4: Process ${ToolName.Property} substitutions
+    result = this.processDollarBraceVariables(result, options);
+
     return result;
+  }
+
+  /**
+   * Process ${ClassName.Property} style variable substitutions.
+   * Resolves references to tool classes and their static properties.
+   *
+   * @param content Content with ${ClassName.Property} patterns
+   * @param options Optional processing configuration
+   * @returns Content with class references substituted
+   */
+  private processDollarBraceVariables(
+    content: string,
+    options?: TemplateProcessingOptions,
+  ): string {
+    // Match ${ClassName.Property} patterns
+    // Pattern breakdown:
+    // - \$\{  : literal ${
+    // - ([A-Za-z][A-Za-z0-9]*) : capture group 1 - class name (starts with letter)
+    // - \.  : literal dot
+    // - ([A-Za-z][A-Za-z0-9]*) : capture group 2 - property name
+    // - \}  : literal }
+    const pattern = /\$\{([A-Za-z][A-Za-z0-9]*)\.([A-Za-z][A-Za-z0-9]*)\}/g;
+
+    return content.replace(
+      pattern,
+      (match, className: string, propName: string) => {
+        const value = getClassProperty(className, propName);
+        if (value !== undefined) {
+          this.logSubstitution(`${className}.${propName}`, value, options);
+          return value;
+        }
+        // If not found, leave the pattern as-is
+        return match;
+      },
+    );
   }
 
   /**

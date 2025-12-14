@@ -686,4 +686,165 @@ describe('TemplateEngine', () => {
       expect(result).toBe('{{{{}}}}claude{{{{}}}}');
     });
   });
+
+  describe('dollar brace variable substitution (${ClassName.Property})', () => {
+    it('should substitute known tool class static properties', () => {
+      /**
+       * @scenario Template contains ${GrepTool.Name} reference
+       * @given Template with tool class reference
+       * @when processTemplate called
+       * @then Static Name property is substituted
+       */
+      const template = "Use '${GrepTool.Name}' to search for patterns";
+      const variables: TemplateVariables = {
+        MODEL: 'claude',
+        PROVIDER: 'anthropic',
+      };
+
+      const result = engine.processTemplate(template, variables);
+
+      // GrepTool.Name is 'search_file_content' (the static property)
+      expect(result).toBe("Use 'search_file_content' to search for patterns");
+    });
+
+    it('should substitute multiple tool class references', () => {
+      /**
+       * @scenario Template contains multiple tool class references
+       * @given Template with GrepTool, GlobTool, ReadFileTool, ReadManyFilesTool
+       * @when processTemplate called
+       * @then All static Name properties are substituted
+       */
+      const template =
+        "Use '${GrepTool.Name}' and '${GlobTool.Name}' to find files. Use '${ReadFileTool.Name}' and '${ReadManyFilesTool.Name}' to read them.";
+      const variables: TemplateVariables = {
+        MODEL: 'claude',
+        PROVIDER: 'anthropic',
+      };
+
+      const result = engine.processTemplate(template, variables);
+
+      // Uses actual static Name properties from tool classes
+      expect(result).toBe(
+        "Use 'search_file_content' and 'glob' to find files. Use 'read_file' and 'read_many_files' to read them.",
+      );
+    });
+
+    it('should leave unknown class references unchanged', () => {
+      /**
+       * @scenario Template contains unknown class reference
+       * @given Template with ${UnknownTool.Name}
+       * @when processTemplate called
+       * @then Unknown reference is left as-is
+       */
+      const template = 'Use ${UnknownTool.Name} for something';
+      const variables: TemplateVariables = {
+        MODEL: 'claude',
+        PROVIDER: 'anthropic',
+      };
+
+      const result = engine.processTemplate(template, variables);
+
+      expect(result).toBe('Use ${UnknownTool.Name} for something');
+    });
+
+    it('should leave unknown properties unchanged', () => {
+      /**
+       * @scenario Template contains unknown property reference
+       * @given Template with ${GrepTool.UnknownProperty}
+       * @when processTemplate called
+       * @then Unknown property is left as-is
+       */
+      const template = 'Use ${GrepTool.UnknownProperty} for something';
+      const variables: TemplateVariables = {
+        MODEL: 'claude',
+        PROVIDER: 'anthropic',
+      };
+
+      const result = engine.processTemplate(template, variables);
+
+      expect(result).toBe('Use ${GrepTool.UnknownProperty} for something');
+    });
+
+    it('should handle mixed {{ }} and ${..} patterns', () => {
+      /**
+       * @scenario Template contains both variable types
+       * @given Template with {{PROVIDER}} and ${GrepTool.Name}
+       * @when processTemplate called
+       * @then Both types are substituted
+       */
+      const template =
+        "Provider {{PROVIDER}} provides the '${GrepTool.Name}' tool";
+      const variables: TemplateVariables = {
+        MODEL: 'claude',
+        PROVIDER: 'anthropic',
+      };
+
+      const result = engine.processTemplate(template, variables);
+
+      expect(result).toBe(
+        "Provider anthropic provides the 'search_file_content' tool",
+      );
+    });
+
+    it('should substitute all known tool class references', () => {
+      /**
+       * @scenario Test multiple tool class static Name properties
+       */
+      const template =
+        '${GrepTool.Name}, ${GlobTool.Name}, ${ReadFileTool.Name}, ${ShellTool.Name}';
+      const variables: TemplateVariables = {
+        MODEL: 'claude',
+        PROVIDER: 'anthropic',
+      };
+
+      const result = engine.processTemplate(template, variables);
+
+      // Uses actual static Name properties
+      expect(result).toBe(
+        'search_file_content, glob, read_file, run_shell_command',
+      );
+    });
+
+    it('should handle malformed dollar brace patterns', () => {
+      /**
+       * @scenario Various malformed ${..} patterns
+       * @given Incomplete or invalid patterns
+       * @when processTemplate called
+       * @then Malformed patterns left unchanged
+       */
+      const template = '${GrepTool} ${.Name} ${ } ${} ${GrepTool.}';
+      const variables: TemplateVariables = {
+        MODEL: 'claude',
+        PROVIDER: 'anthropic',
+      };
+
+      const result = engine.processTemplate(template, variables);
+
+      expect(result).toBe('${GrepTool} ${.Name} ${ } ${} ${GrepTool.}');
+    });
+
+    it('should log dollar brace substitutions when DEBUG=1', () => {
+      const originalDebug = process.env.DEBUG;
+      const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+      try {
+        process.env.DEBUG = '1';
+
+        const template = 'Use ${GrepTool.Name} tool';
+        const variables: TemplateVariables = {
+          MODEL: 'test',
+          PROVIDER: 'test',
+        };
+
+        engine.processTemplate(template, variables);
+
+        expect(consoleSpy).toHaveBeenCalledWith(
+          expect.stringContaining('GrepTool.Name'),
+        );
+      } finally {
+        process.env.DEBUG = originalDebug;
+        consoleSpy.mockRestore();
+      }
+    });
+  });
 });
