@@ -1112,18 +1112,10 @@ export class GeminiClient {
     turns: number = this.MAX_TURNS,
   ): AsyncGenerator<ServerGeminiStreamEvent, Turn> {
     const logger = new DebugLogger('llxprt:client:stream');
-    logger.debug(() => 'DEBUG: GeminiClient.sendMessageStream called');
     logger.debug(
       () =>
-        `DEBUG: GeminiClient.sendMessageStream request: ${JSON.stringify(initialRequest, null, 2)}`,
-    );
-    logger.debug(
-      () =>
-        `DEBUG: GeminiClient.sendMessageStream typeof request: ${typeof initialRequest}`,
-    );
-    logger.debug(
-      () =>
-        `DEBUG: GeminiClient.sendMessageStream Array.isArray(request): ${Array.isArray(initialRequest)}`,
+        `GeminiClient.sendMessageStream called (type=${typeof initialRequest}, isArray=${Array.isArray(initialRequest)})`,
+      initialRequest,
     );
     await this.lazyInitialize();
 

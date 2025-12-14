@@ -1012,36 +1012,12 @@ export class GeminiChat {
     params: SendMessageParameters,
     prompt_id: string,
   ): Promise<AsyncGenerator<StreamEvent>> {
-    this.logger.debug(
-      () => 'DEBUG [geminiChat]: ===== SEND MESSAGE STREAM START =====',
-    );
     // @plan PLAN-20251027-STATELESS5.P10
     // @requirement REQ-STAT5-004.1
     this.logger.debug(
-      () => `DEBUG [geminiChat]: Model from config: ${this.runtimeState.model}`,
-    );
-    this.logger.debug(
-      () => `DEBUG [geminiChat]: Params: ${JSON.stringify(params, null, 2)}`,
-    );
-    this.logger.debug(
-      () => `DEBUG [geminiChat]: Message type: ${typeof params.message}`,
-    );
-    this.logger.debug(
       () =>
-        `DEBUG [geminiChat]: Message content: ${JSON.stringify(params.message, null, 2)}`,
-    );
-    this.logger.debug(() => 'DEBUG: GeminiChat.sendMessageStream called');
-    this.logger.debug(
-      () =>
-        `DEBUG: GeminiChat.sendMessageStream params: ${JSON.stringify(params, null, 2)}`,
-    );
-    this.logger.debug(
-      () =>
-        `DEBUG: GeminiChat.sendMessageStream params.message type: ${typeof params.message}`,
-    );
-    this.logger.debug(
-      () =>
-        `DEBUG: GeminiChat.sendMessageStream params.message: ${JSON.stringify(params.message, null, 2)}`,
+        `[geminiChat] sendMessageStream (model=${this.runtimeState.model}, messageType=${typeof params.message})`,
+      params,
     );
     await this.sendPromise;
 
@@ -1407,7 +1383,8 @@ export class GeminiChat {
       // DEBUG: Check for malformed entries
       this.logger.debug(
         () =>
-          `[DEBUG] geminiChat IContent request (history + new message): ${JSON.stringify(requestContents, null, 2)}`,
+          `[geminiChat] IContent request (history=${requestContents.length - 1} + new message)`,
+        requestContents,
       );
 
       // Get tools in the format the provider expects

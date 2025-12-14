@@ -91,6 +91,13 @@ export {
  */
 
 const logger = new DebugLogger('llxprt:runtime:settings');
+
+/**
+ * Track which runtimes have already logged "Stateless provider ready" to prevent
+ * log flooding from polling loops (e.g., token metrics polling every second).
+ */
+const statelessReadyLoggedForRuntime = new Set<string>();
+
 const STATELESS_METADATA_KEYS = [
   'statelessHardening',
   'statelessProviderMode',
@@ -549,10 +556,14 @@ export function ensureStatelessProviderReady(): void {
 
   providerManager!.prepareStatelessProviderInvocation(runtimeContext);
 
-  logger.debug(
-    () =>
-      `[cli-runtime] Stateless provider ready for runtime ${runtimeId} (REQ-SP4-004, REQ-SP4-005)`,
-  );
+  // Only log once per runtime to prevent flooding from polling loops
+  if (!statelessReadyLoggedForRuntime.has(runtimeId)) {
+    statelessReadyLoggedForRuntime.add(runtimeId);
+    logger.debug(
+      () =>
+        `[cli-runtime] Stateless provider ready for runtime ${runtimeId} (REQ-SP4-004, REQ-SP4-005)`,
+    );
+  }
 }
 
 /**
