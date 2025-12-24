@@ -21,7 +21,6 @@ import { RipGrepTool } from '../tools/ripGrep.js';
 import { GlobTool } from '../tools/glob.js';
 import { DebugLogger } from '../debug/DebugLogger.js';
 import { EditTool } from '../tools/edit.js';
-import { SmartEditTool } from '../tools/smart-edit.js';
 import { ShellTool } from '../tools/shell.js';
 import { WriteFileTool } from '../tools/write-file.js';
 import { GoogleWebFetchTool } from '../tools/google-web-fetch.js';
@@ -52,6 +51,7 @@ import { FileDiscoveryService } from '../services/fileDiscoveryService.js';
 import { GitService } from '../services/gitService.js';
 import { HistoryService } from '../services/history/HistoryService.js';
 import { loadServerHierarchicalMemory } from '../utils/memoryDiscovery.js';
+import { OutputFormat } from '../utils/output-format.js';
 import {
   // TELEMETRY: Re-enabled for local file logging only
   initializeTelemetry,
@@ -170,12 +170,21 @@ export interface TelemetrySettings {
   remoteConsentGiven?: boolean;
 }
 
+/**
+ * All information required in CLI to handle an extension. Defined in Core so
+ * that the collection of loaded, active, and inactive extensions can be passed
+ * around on the config object though Core does not use this information
+ * directly.
+ */
 export interface GeminiCLIExtension {
   name: string;
   version: string;
   isActive: boolean;
   path: string;
   installMetadata?: ExtensionInstallMetadata;
+  mcpServers?: Record<string, MCPServerConfig>;
+  contextFiles: string[];
+  excludeTools?: string[];
 }
 
 export interface ExtensionInstallMetadata {
@@ -188,14 +197,14 @@ export interface ExtensionInstallMetadata {
 
 import type { FileFilteringOptions } from './constants.js';
 import {
-  DEFAULT_MEMORY_FILE_FILTERING_OPTIONS,
   DEFAULT_FILE_FILTERING_OPTIONS,
+  DEFAULT_MEMORY_FILE_FILTERING_OPTIONS,
 } from './constants.js';
 
 export type { FileFilteringOptions };
 export {
-  DEFAULT_MEMORY_FILE_FILTERING_OPTIONS,
   DEFAULT_FILE_FILTERING_OPTIONS,
+  DEFAULT_MEMORY_FILE_FILTERING_OPTIONS,
 };
 
 export const DEFAULT_TRUNCATE_TOOL_OUTPUT_THRESHOLD = 4_000_000;
@@ -282,6 +291,7 @@ export interface ConfigParameters {
   sandbox?: SandboxConfig;
   targetDir: string;
   debugMode: boolean;
+  outputFormat?: OutputFormat;
   question?: string;
   fullContext?: boolean;
   coreTools?: string[];
@@ -327,7 +337,6 @@ export interface ConfigParameters {
   blockedMcpServers?: Array<{ name: string; extensionName: string }>;
   noBrowser?: boolean;
   summarizeToolOutput?: Record<string, SummarizeToolOutputSettings>;
-  folderTrustFeature?: boolean;
   folderTrust?: boolean;
   ideMode?: boolean;
   ideClient?: IdeClient;
@@ -343,12 +352,13 @@ export interface ConfigParameters {
   extensionManagement?: boolean;
   enablePromptCompletion?: boolean;
   eventEmitter?: EventEmitter;
-  useSmartEdit?: boolean;
   settingsService?: SettingsService;
   policyEngineConfig?: PolicyEngineConfig;
   truncateToolOutputThreshold?: number;
   truncateToolOutputLines?: number;
   enableToolOutputTruncation?: boolean;
+  continueOnFailedApiCall?: boolean;
+  enableShellOutputEfficiency?: boolean;
 }
 
 export class Config {
@@ -363,6 +373,7 @@ export class Config {
   private readonly targetDir: string;
   private workspaceContext: WorkspaceContext;
   private readonly debugMode: boolean;
+  private readonly outputFormat: OutputFormat;
   private readonly question: string | undefined;
   private readonly fullContext: boolean;
   private readonly coreTools: string[] | undefined;
@@ -400,7 +411,6 @@ export class Config {
   private readonly originalModel: string;
   private readonly extensionContextFilePaths: string[];
   private readonly noBrowser: boolean;
-  private readonly folderTrustFeature: boolean;
   private readonly folderTrust: boolean;
   private ideMode: boolean;
   private ideClient!: IdeClient;
@@ -502,12 +512,13 @@ export class Config {
   readonly storage: Storage;
   private readonly fileExclusions: FileExclusions;
   private readonly eventEmitter?: EventEmitter;
-  private readonly useSmartEdit: boolean;
   private readonly messageBus: MessageBus;
   private readonly policyEngine: PolicyEngine;
   truncateToolOutputThreshold: number;
   truncateToolOutputLines: number;
   enableToolOutputTruncation: boolean;
+  private readonly continueOnFailedApiCall: boolean;
+  private readonly enableShellOutputEfficiency: boolean;
 
   constructor(params: ConfigParameters) {
     const providedSettingsService = params.settingsService;
@@ -557,6 +568,7 @@ export class Config {
       params.includeDirectories ?? [],
     );
     this.debugMode = params.debugMode;
+    this.outputFormat = params.outputFormat ?? OutputFormat.TEXT;
     this.question = params.question;
     this.fullContext = params.fullContext ?? false;
     this.coreTools = params.coreTools;
@@ -589,8 +601,12 @@ export class Config {
     this.usageStatisticsEnabled = params.usageStatisticsEnabled ?? true;
 
     this.fileFiltering = {
-      respectGitIgnore: params.fileFiltering?.respectGitIgnore ?? true,
-      respectLlxprtIgnore: params.fileFiltering?.respectLlxprtIgnore ?? true,
+      respectGitIgnore:
+        params.fileFiltering?.respectGitIgnore ??
+        DEFAULT_FILE_FILTERING_OPTIONS.respectGitIgnore,
+      respectLlxprtIgnore:
+        params.fileFiltering?.respectLlxprtIgnore ??
+        DEFAULT_FILE_FILTERING_OPTIONS.respectLlxprtIgnore,
       enableRecursiveFileSearch:
         params.fileFiltering?.enableRecursiveFileSearch ?? true,
       disableFuzzySearch: params.fileFiltering?.disableFuzzySearch ?? false,
@@ -615,7 +631,6 @@ export class Config {
     this._blockedMcpServers = params.blockedMcpServers ?? [];
     this.noBrowser = params.noBrowser ?? false;
     this.summarizeToolOutput = params.summarizeToolOutput;
-    this.folderTrustFeature = params.folderTrustFeature ?? false;
     this.folderTrust = params.folderTrust ?? false;
     this.ideMode = params.ideMode ?? false;
     this.complexityAnalyzerSettings = params.complexityAnalyzer ?? {
@@ -638,7 +653,9 @@ export class Config {
     this.truncateToolOutputLines =
       params.truncateToolOutputLines ?? DEFAULT_TRUNCATE_TOOL_OUTPUT_LINES;
     this.enableToolOutputTruncation = params.enableToolOutputTruncation ?? true;
-    this.useSmartEdit = params.useSmartEdit ?? false;
+    this.continueOnFailedApiCall = params.continueOnFailedApiCall ?? true;
+    this.enableShellOutputEfficiency =
+      params.enableShellOutputEfficiency ?? true;
     this.extensionManagement = params.extensionManagement ?? false;
     this.storage = new Storage(this.targetDir);
     this.enablePromptCompletion = params.enablePromptCompletion ?? false;
@@ -942,6 +959,10 @@ export class Config {
 
   getDebugMode(): boolean {
     return this.debugMode;
+  }
+
+  getOutputFormat(): OutputFormat {
+    return this.outputFormat;
   }
   getQuestion(): string | undefined {
     return this.question;
@@ -1295,18 +1316,17 @@ export class Config {
     return this.ideMode;
   }
 
-  getFolderTrustFeature(): boolean {
-    return this.folderTrustFeature;
+  /**
+   * Returns 'true' if the folder trust feature is enabled.
+   */
+  getFolderTrust(): boolean {
+    return this.folderTrust;
   }
 
   /**
    * Returns 'true' if the workspace is considered "trusted".
    * 'false' for untrusted.
    */
-  getFolderTrust(): boolean {
-    return this.folderTrust;
-  }
-
   isTrustedFolder(): boolean {
     // isWorkspaceTrusted in cli/src/config/trustedFolder.js returns undefined
     // when the file based trust value is unavailable, since it is mainly used
@@ -1551,16 +1571,20 @@ export class Config {
     return this.skipNextSpeakerCheck;
   }
 
+  getContinueOnFailedApiCall(): boolean {
+    return this.continueOnFailedApiCall;
+  }
+
+  getEnableShellOutputEfficiency(): boolean {
+    return this.enableShellOutputEfficiency;
+  }
+
   getScreenReader(): boolean {
     return this.accessibility.screenReader ?? false;
   }
 
   getEnablePromptCompletion(): boolean {
     return this.enablePromptCompletion;
-  }
-
-  getUseSmartEdit(): boolean {
-    return this.useSmartEdit;
   }
 
   getNonInteractive(): boolean {
@@ -1702,11 +1726,7 @@ export class Config {
     }
 
     registerCoreTool(GlobTool, this);
-    if (this.getUseSmartEdit()) {
-      registerCoreTool(SmartEditTool, this);
-    } else {
-      registerCoreTool(EditTool, this);
-    }
+    registerCoreTool(EditTool, this);
     registerCoreTool(WriteFileTool, this);
     registerCoreTool(GoogleWebFetchTool, this);
     registerCoreTool(ReadManyFilesTool, this);

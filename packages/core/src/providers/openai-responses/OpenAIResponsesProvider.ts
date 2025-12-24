@@ -32,11 +32,18 @@ import {
   type ToolCallBlock,
   type ToolResponseBlock,
 } from '../../services/history/IContent.js';
+import {
+  limitOutputTokens,
+  type ToolOutputSettingsProvider,
+} from '../../utils/toolOutputLimiter.js';
 import { normalizeToOpenAIToolId } from '../utils/toolIdNormalization.js';
 import { type IProviderConfig } from '../types/IProviderConfig.js';
 import { RESPONSES_API_MODELS } from '../openai/RESPONSES_API_MODELS.js';
 import { CODEX_MODELS } from './CODEX_MODELS.js';
-import { CODEX_SYSTEM_PROMPT } from './CODEX_PROMPT.js';
+import {
+  buildCodexSteeringPrompt,
+  CODEX_SYSTEM_PROMPT,
+} from './CODEX_PROMPT.js';
 import {
   parseResponsesStream,
   parseErrorResponse,
@@ -509,10 +516,26 @@ export class OpenAIResponsesProvider extends BaseProvider {
 
         // Normalize tool IDs to OpenAI format (call_XXX) - fixes issue #825
         for (const toolResponseBlock of toolResponseBlocks) {
-          const result =
+          const rawResult =
             typeof toolResponseBlock.result === 'string'
               ? toolResponseBlock.result
               : JSON.stringify(toolResponseBlock.result);
+
+          const outputLimiterConfig =
+            options.config ??
+            options.runtime?.config ??
+            this.globalConfig ??
+            ({
+              getEphemeralSettings: () => ({}),
+            } satisfies ToolOutputSettingsProvider);
+
+          const limited = limitOutputTokens(
+            rawResult,
+            outputLimiterConfig,
+            toolResponseBlock.toolName ?? 'tool_response',
+          );
+
+          const candidate = limited.content || limited.message || '';
 
           const outputCallId = normalizeToOpenAIToolId(
             toolResponseBlock.callId,
@@ -544,7 +567,7 @@ export class OpenAIResponsesProvider extends BaseProvider {
           input.push({
             type: 'function_call_output',
             call_id: outputCallId,
-            output: result,
+            output: candidate,
           });
         }
       }
@@ -615,6 +638,11 @@ export class OpenAIResponsesProvider extends BaseProvider {
       requestInput = requestInput.filter(
         (msg) => !('role' in msg) || msg.role !== 'system',
       );
+
+      const steeringPrompt = buildCodexSteeringPrompt(systemPrompt);
+      if (steeringPrompt) {
+        requestInput.unshift({ role: 'user', content: steeringPrompt });
+      }
     }
 
     const request: {

@@ -79,6 +79,35 @@ vi.mock('./prompts.js', () => ({
   getCoreSystemPromptAsync: vi.fn().mockResolvedValue('Core Prompt'),
 }));
 
+function createCompletedToolCallResponse(params: {
+  callId: string;
+  responseParts?: Part[];
+  resultDisplay?: unknown;
+  error?: Error;
+  errorType?: ToolErrorType;
+  agentId?: string;
+}) {
+  return {
+    status: params.error ? ('error' as const) : ('success' as const),
+    request: {
+      callId: params.callId,
+      name: 'mock_tool',
+      args: {},
+      isClientInitiated: true,
+      prompt_id: 'mock-prompt',
+      agentId: params.agentId ?? 'primary',
+    },
+    response: {
+      callId: params.callId,
+      responseParts: params.responseParts ?? [],
+      resultDisplay: params.resultDisplay,
+      error: params.error,
+      errorType: params.errorType,
+      agentId: params.agentId ?? 'primary',
+    },
+  };
+}
+
 async function createMockConfig(
   toolRegistryMocks = {},
 ): Promise<{ config: Config; toolRegistry: ToolRegistry }> {
@@ -781,10 +810,12 @@ describe('subagent.ts', () => {
         );
 
         vi.mocked(executeToolCall).mockResolvedValue({
-          callId: 'call1',
-          responseParts: [{ text: 'file content' }],
-          resultDisplay: 'ok',
-          agentId: 'subagent-1',
+          ...createCompletedToolCallResponse({
+            callId: 'call1',
+            responseParts: [{ text: 'file content' }],
+            resultDisplay: 'ok',
+            agentId: 'subagent-1',
+          }),
         } as Awaited<ReturnType<typeof executeToolCall>>);
 
         const runtimeBundle = createStatelessRuntimeBundle({
@@ -840,9 +871,11 @@ describe('subagent.ts', () => {
         );
 
         vi.mocked(executeToolCall).mockResolvedValue({
-          callId: 'call-1',
-          responseParts: [{ text: 'ok' }],
-          resultDisplay: 'ok',
+          ...createCompletedToolCallResponse({
+            callId: 'call-1',
+            responseParts: [{ text: 'ok' }],
+            resultDisplay: 'ok',
+          }),
         } as unknown as Awaited<ReturnType<typeof executeToolCall>>);
 
         const fnCalls: FunctionCall[] = [
@@ -1231,11 +1264,11 @@ describe('subagent.ts', () => {
 
         // Mock the tool execution result
         vi.mocked(executeToolCall).mockResolvedValue({
-          callId: 'call_1',
-          responseParts: [{ text: 'file1.txt\nfile2.ts' }],
-          resultDisplay: 'Listed 2 files',
-          error: undefined,
-          errorType: undefined, // Or ToolErrorType.NONE if available and appropriate
+          ...createCompletedToolCallResponse({
+            callId: 'call_1',
+            responseParts: [{ text: 'file1.txt\nfile2.ts' }],
+            resultDisplay: 'Listed 2 files',
+          }),
         });
 
         const runtimeBundle = createStatelessRuntimeBundle({
@@ -1312,11 +1345,13 @@ describe('subagent.ts', () => {
 
         // Mock the tool execution failure.
         vi.mocked(executeToolCall).mockResolvedValue({
-          callId: 'call_fail',
-          responseParts: [{ text: 'ERROR: Tool failed catastrophically' }], // This should be sent to the model
-          resultDisplay: 'Tool failed catastrophically',
-          error: new Error('Failure'),
-          errorType: ToolErrorType.INVALID_TOOL_PARAMS,
+          ...createCompletedToolCallResponse({
+            callId: 'call_fail',
+            responseParts: [{ text: 'ERROR: Tool failed catastrophically' }],
+            resultDisplay: 'Tool failed catastrophically',
+            error: new Error('Failure'),
+            errorType: ToolErrorType.INVALID_TOOL_PARAMS,
+          }),
         });
 
         const runtimeBundle = createStatelessRuntimeBundle({
@@ -1418,36 +1453,38 @@ describe('subagent.ts', () => {
         );
 
         vi.mocked(executeToolCall).mockResolvedValue({
-          callId: 'call_write',
-          responseParts: [
-            {
-              functionCall: {
-                id: 'call_write',
-                name: 'write_file',
-                args: {
-                  path: 'reports/joetest.md',
-                  content: 'hello',
+          ...createCompletedToolCallResponse({
+            callId: 'call_write',
+            responseParts: [
+              {
+                functionCall: {
+                  id: 'call_write',
+                  name: 'write_file',
+                  args: {
+                    path: 'reports/joetest.md',
+                    content: 'hello',
+                  },
                 },
               },
-            },
-            {
-              functionResponse: {
-                id: 'call_write',
-                name: 'write_file',
-                response: {
-                  error:
-                    'Tool "write_file" is disabled in the current profile.',
+              {
+                functionResponse: {
+                  id: 'call_write',
+                  name: 'write_file',
+                  response: {
+                    error:
+                      'Tool "write_file" is disabled in the current profile.',
+                  },
                 },
               },
-            },
-          ],
-          resultDisplay:
-            'Tool "write_file" is disabled in the current profile.',
-          error: new Error(
-            'Tool "write_file" is disabled in the current profile.',
-          ),
-          errorType: ToolErrorType.TOOL_DISABLED,
-          agentId: 'test-agent',
+            ],
+            resultDisplay:
+              'Tool "write_file" is disabled in the current profile.',
+            error: new Error(
+              'Tool "write_file" is disabled in the current profile.',
+            ),
+            errorType: ToolErrorType.TOOL_DISABLED,
+            agentId: 'test-agent',
+          }),
         });
 
         const scope = await SubAgentScope.create(
@@ -1767,6 +1804,305 @@ describe('subagent.ts', () => {
         // Try to access the private activeAbortController through cancel method
         // If it's null, cancel should be safe
         expect(() => scope.cancel('test')).not.toThrow();
+      });
+    });
+
+    describe('buildPartsFromCompletedCalls output deduplication', () => {
+      beforeEach(() => {
+        vi.clearAllMocks();
+        mockReadTodos.mockResolvedValue([]);
+        TodoStoreMock.mockClear();
+
+        vi.mocked(getEnvironmentContext).mockResolvedValue([
+          { text: 'Env Context' },
+        ]);
+        vi.mocked(createContentGenerator).mockResolvedValue({
+          getGenerativeModel: vi.fn(),
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        } as any);
+
+        mockSendMessageStream = vi.fn();
+        vi.mocked(GeminiChat).mockImplementation(
+          () =>
+            ({
+              sendMessageStream: mockSendMessageStream,
+            }) as unknown as GeminiChat,
+        );
+      });
+
+      afterEach(() => {
+        vi.restoreAllMocks();
+      });
+
+      it('should not call onMessage for tools with canUpdateOutput=true (fixes #898)', async () => {
+        const { config } = await createMockConfig();
+        const { overrides } = createRuntimeOverrides();
+        const promptConfig: PromptConfig = { systemPrompt: 'Execute task.' };
+
+        mockSendMessageStream.mockImplementation(createMockStream(['stop']));
+
+        const scope = await SubAgentScope.create(
+          'test-agent',
+          config,
+          promptConfig,
+          defaultModelConfig,
+          defaultRunConfig,
+          undefined,
+          undefined,
+          overrides,
+        );
+
+        // Track onMessage calls
+        const onMessageCalls: string[] = [];
+        scope.onMessage = (message: string) => {
+          onMessageCalls.push(message);
+        };
+
+        // Create a mock tool with canUpdateOutput=true (like shell tool)
+        const mockStreamingTool = {
+          name: 'run_shell_command',
+          displayName: 'Shell',
+          canUpdateOutput: true,
+          schema: { parameters: { type: Type.OBJECT, properties: {} } },
+          build: vi.fn(),
+        };
+
+        // Simulate completed calls with a streaming tool
+        const completedCalls = [
+          {
+            status: 'success' as const,
+            request: {
+              callId: 'call-1',
+              name: 'run_shell_command',
+              args: { command: 'echo hello' },
+            },
+            tool: mockStreamingTool,
+            response: {
+              callId: 'call-1',
+              responseParts: [{ text: 'hello\n' }],
+              resultDisplay: 'hello\n',
+            },
+            invocation: { execute: vi.fn() },
+          },
+        ];
+
+        // Call the private method through reflection
+        const buildParts = (
+          scope as unknown as {
+            buildPartsFromCompletedCalls: (
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              calls: any[],
+            ) => Part[];
+          }
+        ).buildPartsFromCompletedCalls.bind(scope);
+
+        buildParts(completedCalls);
+
+        // For tools with canUpdateOutput=true, onMessage should NOT be called
+        // because the output was already streamed live
+        expect(onMessageCalls).toHaveLength(0);
+      });
+
+      it('should call onMessage for tools with canUpdateOutput=false', async () => {
+        const { config } = await createMockConfig();
+        const { overrides } = createRuntimeOverrides();
+        const promptConfig: PromptConfig = { systemPrompt: 'Execute task.' };
+
+        mockSendMessageStream.mockImplementation(createMockStream(['stop']));
+
+        const scope = await SubAgentScope.create(
+          'test-agent',
+          config,
+          promptConfig,
+          defaultModelConfig,
+          defaultRunConfig,
+          undefined,
+          undefined,
+          overrides,
+        );
+
+        // Track onMessage calls
+        const onMessageCalls: string[] = [];
+        scope.onMessage = (message: string) => {
+          onMessageCalls.push(message);
+        };
+
+        // Create a mock tool with canUpdateOutput=false (like read_file)
+        const mockNonStreamingTool = {
+          name: 'read_file',
+          displayName: 'Read File',
+          canUpdateOutput: false,
+          schema: { parameters: { type: Type.OBJECT, properties: {} } },
+          build: vi.fn(),
+        };
+
+        // Simulate completed calls with a non-streaming tool
+        const completedCalls = [
+          {
+            status: 'success' as const,
+            request: {
+              callId: 'call-1',
+              name: 'read_file',
+              args: { path: '/test.txt' },
+            },
+            tool: mockNonStreamingTool,
+            response: {
+              callId: 'call-1',
+              responseParts: [{ text: 'file contents' }],
+              resultDisplay: 'Read 100 bytes from /test.txt',
+            },
+            invocation: { execute: vi.fn() },
+          },
+        ];
+
+        // Call the private method through reflection
+        const buildParts = (
+          scope as unknown as {
+            buildPartsFromCompletedCalls: (
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              calls: any[],
+            ) => Part[];
+          }
+        ).buildPartsFromCompletedCalls.bind(scope);
+
+        buildParts(completedCalls);
+
+        // For tools with canUpdateOutput=false, onMessage SHOULD be called
+        expect(onMessageCalls).toHaveLength(1);
+        expect(onMessageCalls[0]).toBe('Read 100 bytes from /test.txt');
+      });
+
+      it('should call onMessage for error calls even if tool had canUpdateOutput=true', async () => {
+        const { config } = await createMockConfig();
+        const { overrides } = createRuntimeOverrides();
+        const promptConfig: PromptConfig = { systemPrompt: 'Execute task.' };
+
+        mockSendMessageStream.mockImplementation(createMockStream(['stop']));
+
+        const scope = await SubAgentScope.create(
+          'test-agent',
+          config,
+          promptConfig,
+          defaultModelConfig,
+          defaultRunConfig,
+          undefined,
+          undefined,
+          overrides,
+        );
+
+        // Track onMessage calls
+        const onMessageCalls: string[] = [];
+        scope.onMessage = (message: string) => {
+          onMessageCalls.push(message);
+        };
+
+        // Create a mock tool with canUpdateOutput=true
+        const mockStreamingTool = {
+          name: 'run_shell_command',
+          displayName: 'Shell',
+          canUpdateOutput: true,
+          schema: { parameters: { type: Type.OBJECT, properties: {} } },
+          build: vi.fn(),
+        };
+
+        // Simulate an errored call - errors should still display
+        const completedCalls = [
+          {
+            status: 'error' as const,
+            request: {
+              callId: 'call-1',
+              name: 'run_shell_command',
+              args: { command: 'invalid-cmd' },
+            },
+            tool: mockStreamingTool,
+            response: {
+              callId: 'call-1',
+              responseParts: [{ text: 'Command failed' }],
+              resultDisplay: 'Error: command not found',
+              error: new Error('command not found'),
+            },
+          },
+        ];
+
+        // Call the private method through reflection
+        const buildParts = (
+          scope as unknown as {
+            buildPartsFromCompletedCalls: (
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              calls: any[],
+            ) => Part[];
+          }
+        ).buildPartsFromCompletedCalls.bind(scope);
+
+        buildParts(completedCalls);
+
+        // For error status, onMessage SHOULD be called to show the error
+        expect(onMessageCalls).toHaveLength(1);
+        expect(onMessageCalls[0]).toBe('Error: command not found');
+      });
+
+      it('should handle calls where tool is undefined gracefully', async () => {
+        const { config } = await createMockConfig();
+        const { overrides } = createRuntimeOverrides();
+        const promptConfig: PromptConfig = { systemPrompt: 'Execute task.' };
+
+        mockSendMessageStream.mockImplementation(createMockStream(['stop']));
+
+        const scope = await SubAgentScope.create(
+          'test-agent',
+          config,
+          promptConfig,
+          defaultModelConfig,
+          defaultRunConfig,
+          undefined,
+          undefined,
+          overrides,
+        );
+
+        // Track onMessage calls
+        const onMessageCalls: string[] = [];
+        scope.onMessage = (message: string) => {
+          onMessageCalls.push(message);
+        };
+
+        // Simulate an errored call where tool is undefined
+        const completedCalls = [
+          {
+            status: 'error' as const,
+            request: {
+              callId: 'call-1',
+              name: 'unknown_tool',
+              args: {},
+            },
+            // tool is undefined
+            response: {
+              callId: 'call-1',
+              responseParts: [{ text: 'Tool not found' }],
+              resultDisplay: 'Tool not found',
+              error: new Error('Tool not found'),
+            },
+          },
+        ];
+
+        // Call the private method through reflection
+        const buildParts = (
+          scope as unknown as {
+            buildPartsFromCompletedCalls: (
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              calls: any[],
+            ) => Part[];
+          }
+        ).buildPartsFromCompletedCalls.bind(scope);
+
+        // Should not throw
+        const parts = buildParts(completedCalls);
+
+        // Should have produced parts
+        expect(parts.length).toBeGreaterThan(0);
+
+        // Should still display the error
+        expect(onMessageCalls).toHaveLength(1);
+        expect(onMessageCalls[0]).toBe('Tool not found');
       });
     });
   });

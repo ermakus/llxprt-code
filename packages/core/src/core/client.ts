@@ -588,7 +588,14 @@ export class GeminiClient {
 
     // If chat is initialized, get its current history
     if (this.hasChatInitialized()) {
-      return this.getChat().getHistory();
+      const chat = this.getChat() as unknown as {
+        waitForIdle?: () => Promise<void>;
+        getHistory: () => Content[];
+      };
+      if (typeof chat.waitForIdle === 'function') {
+        await chat.waitForIdle();
+      }
+      return chat.getHistory();
     }
 
     // No history available
@@ -762,6 +769,7 @@ export class GeminiClient {
     // CRITICAL: Reuse stored HistoryService if available to preserve UI conversation display
     // This is essential for maintaining conversation history across provider switches
     let historyService: HistoryService;
+    const reusedHistoryService = Boolean(this._storedHistoryService);
     if (this._storedHistoryService) {
       this.logger.debug(
         'Reusing stored HistoryService to preserve UI conversation',
@@ -775,7 +783,7 @@ export class GeminiClient {
     }
 
     // Add extraHistory if provided
-    if (extraHistory && extraHistory.length > 0) {
+    if (!reusedHistoryService && extraHistory && extraHistory.length > 0) {
       // @plan PLAN-20251027-STATELESS5.P10
       // @requirement REQ-STAT5-003.1
       const currentModel = this.runtimeState.model;
@@ -1105,11 +1113,22 @@ export class GeminiClient {
     }
   }
 
+  private _getEffectiveModelForCurrentTurn(): string {
+    if (this.currentSequenceModel) {
+      return this.currentSequenceModel;
+    }
+
+    // In LLxprt, config.getModel() already handles provider-specific model resolution
+    // and fallback mode, so we just return it directly
+    return this.config.getModel();
+  }
+
   async *sendMessageStream(
     initialRequest: PartListUnion,
     signal: AbortSignal,
     prompt_id: string,
     turns: number = this.MAX_TURNS,
+    isInvalidStreamRetry: boolean = false,
   ): AsyncGenerator<ServerGeminiStreamEvent, Turn> {
     const logger = new DebugLogger('llxprt:client:stream');
     logger.debug(
@@ -1170,6 +1189,34 @@ export class GeminiClient {
       const providerManager = contentGenConfig?.providerManager;
       const providerName =
         providerManager?.getActiveProviderName() || 'backend';
+      return new Turn(
+        this.getChat(),
+        prompt_id,
+        DEFAULT_AGENT_ID,
+        providerName,
+      );
+    }
+
+    // Check for context window overflow
+    const modelForLimitCheck = this._getEffectiveModelForCurrentTurn();
+
+    const estimatedRequestTokenCount = Math.floor(
+      JSON.stringify(initialRequest).length / 4,
+    );
+
+    const remainingTokenCount =
+      tokenLimit(modelForLimitCheck) -
+      uiTelemetryService.getLastPromptTokenCount();
+
+    if (estimatedRequestTokenCount > remainingTokenCount * 0.95) {
+      const contentGenConfig = this.config.getContentGeneratorConfig();
+      const providerManager = contentGenConfig?.providerManager;
+      const providerName =
+        providerManager?.getActiveProviderName() || 'backend';
+      yield {
+        type: GeminiEventType.ContextWindowWillOverflow,
+        value: { estimatedRequestTokenCount, remainingTokenCount },
+      };
       return new Turn(
         this.getChat(),
         prompt_id,
@@ -1346,6 +1393,25 @@ export class GeminiClient {
             yield deferred;
           }
           return turn;
+        }
+
+        // Handle InvalidStream with retry via "Please continue" prompt
+        if (event.type === GeminiEventType.InvalidStream) {
+          if (this.config.getContinueOnFailedApiCall()) {
+            if (isInvalidStreamRetry) {
+              // We already retried once, so stop here.
+              return turn;
+            }
+            const nextRequest = [{ text: 'System: Please continue.' }];
+            yield* this.sendMessageStream(
+              nextRequest,
+              signal,
+              prompt_id,
+              boundedTurns - 1,
+              true, // Set isInvalidStreamRetry to true
+            );
+            return turn;
+          }
         }
       }
 
@@ -1643,6 +1709,13 @@ export class GeminiClient {
       };
     }
 
+    // If the model is 'auto', we will use a placeholder model to check.
+    // Compression occurs before we choose a model, so calling `count_tokens`
+    // before the model is chosen would result in an error.
+    // @plan PLAN-20251027-STATELESS5.P10
+    // @requirement REQ-STAT5-003.1
+    const model = this._getEffectiveModelForCurrentTurn();
+
     const curatedHistory = this.getChat().getHistory(true);
 
     // Regardless of `force`, don't do anything if the history is empty.
@@ -1660,10 +1733,6 @@ export class GeminiClient {
     // Use lastPromptTokenCount from telemetry service as the source of truth
     // This is more accurate than estimating from history
     const originalTokenCount = uiTelemetryService.getLastPromptTokenCount();
-
-    // @plan PLAN-20251027-STATELESS5.P10
-    // @requirement REQ-STAT5-003.1
-    const model = this.runtimeState.model;
 
     const contextPercentageThreshold =
       this.config.getChatCompression()?.contextPercentageThreshold;
@@ -1703,6 +1772,14 @@ export class GeminiClient {
     const historyToCompress = curatedHistory.slice(0, compressBeforeIndex);
     const historyToKeep = curatedHistory.slice(compressBeforeIndex);
 
+    if (historyToCompress.length === 0) {
+      return {
+        originalTokenCount,
+        newTokenCount: originalTokenCount,
+        compressionStatus: CompressionStatus.NOOP,
+      };
+    }
+
     this.getChat().setHistory(historyToCompress);
 
     const { text: summary } = await this.getChat().sendMessage(
@@ -1740,7 +1817,9 @@ export class GeminiClient {
       ? compressedHistoryService.getTotalTokens()
       : 0;
     if (newTokenCount === undefined || newTokenCount === 0) {
-      console.warn('Could not determine compressed history token count.');
+      this.logger.warn(
+        () => 'Could not determine compressed history token count.',
+      );
       this.hasFailedCompressionAttempt = !force && true;
       return {
         originalTokenCount,
@@ -1751,8 +1830,9 @@ export class GeminiClient {
     }
 
     // TODO: Add proper telemetry logging once available
-    console.debug(
-      `Chat compression: ${originalTokenCount} -> ${newTokenCount} tokens`,
+    this.logger.debug(
+      () =>
+        `Chat compression: ${originalTokenCount} -> ${newTokenCount} tokens`,
     );
 
     if (newTokenCount > originalTokenCount) {
