@@ -24,6 +24,7 @@
     "@ai-sdk/openai": "^2.0.74",
     "ai": "^5.0.104",
     "@anthropic-ai/sdk": "^0.55.1",
+    "gigachat": "^0.0.17",
     "@dqbd/tiktoken": "^1.0.21",
     "@google/genai": "1.16.0",
     "@iarna/toml": "^2.2.5",
