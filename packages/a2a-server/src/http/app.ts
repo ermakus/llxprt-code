@@ -11,6 +11,10 @@ import type { TaskStore } from '@a2a-js/sdk/server';
 import { DefaultRequestHandler, InMemoryTaskStore } from '@a2a-js/sdk/server';
 import { A2AExpressApp } from '@a2a-js/sdk/server/express'; // Import server components
 import { v4 as uuidv4 } from 'uuid';
+import {
+  createProviderRuntimeContext,
+  setActiveProviderRuntimeContext,
+} from '@vybestack/llxprt-code-core';
 import { logger } from '../utils/logger.js';
 import type { AgentSettings } from '../types.js';
 import { GCSTaskStore, NoOpTaskStore } from '../persistence/gcs.js';
@@ -61,6 +65,10 @@ export function updateCoderAgentCardUrl(port: number) {
 
 export async function createApp() {
   try {
+    // Initialize the provider runtime context before creating any Config instances
+    const runtimeContext = createProviderRuntimeContext();
+    setActiveProviderRuntimeContext(runtimeContext);
+
     // loadEnvironment() is called within getConfig now
     const bucketName = process.env['GCS_BUCKET_NAME'];
     let taskStoreForExecutor: TaskStore;

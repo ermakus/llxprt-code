@@ -21,6 +21,9 @@ import {
   DEFAULT_GEMINI_EMBEDDING_MODEL,
   DEFAULT_GEMINI_MODEL,
   type GeminiCLIExtension,
+  getActiveProviderRuntimeContext,
+  ProviderManager,
+  OpenAIProvider,
 } from '@vybestack/llxprt-code-core';
 
 import { logger } from '../utils/logger.js';
@@ -36,9 +39,16 @@ export async function loadConfig(
   const workspaceDir = process.cwd();
   const adcFilePath = process.env['GOOGLE_APPLICATION_CREDENTIALS'];
 
+  // Determine the model and provider based on environment variables
+  const openaiApiKey = process.env['OPENAI_API_KEY'];
+  const openaiModel = process.env['OPENAI_MODEL'] || 'gpt-4';
+  const defaultModel = openaiApiKey ? openaiModel : DEFAULT_GEMINI_MODEL;
+  const provider = openaiApiKey ? 'openai' : undefined;
+
   const configParams: ConfigParameters = {
     sessionId: taskId,
-    model: DEFAULT_GEMINI_MODEL,
+    model: defaultModel,
+    provider,
     embeddingModel: DEFAULT_GEMINI_EMBEDDING_MODEL,
     sandbox: undefined, // Sandbox might not be relevant for a server-side agent
     targetDir: workspaceDir, // Or a specific directory the agent operates on
@@ -107,9 +117,43 @@ export async function loadConfig(
   } else if (process.env['GEMINI_API_KEY']) {
     logger.info('[Config] Using Gemini API Key');
     await config.refreshAuth(AuthType.USE_GEMINI);
+  } else if (openaiApiKey) {
+    // OpenAI-compatible provider support (including DeepSeek, etc.)
+    logger.info('[Config] Using OpenAI-compatible provider');
+    const runtimeContext = getActiveProviderRuntimeContext();
+    const settingsService = runtimeContext.settingsService;
+
+    // Set activeProvider to openai
+    settingsService.set('activeProvider', 'openai');
+
+    // Configure OpenAI provider settings
+    const openaiBaseUrl = process.env['OPENAI_BASE_URL'];
+
+    settingsService.setProviderSetting('openai', 'auth-key', openaiApiKey);
+    if (openaiBaseUrl) {
+      settingsService.setProviderSetting('openai', 'base-url', openaiBaseUrl);
+    }
+    settingsService.setProviderSetting('openai', 'model', openaiModel);
+
+    logger.info(`[Config] OpenAI Base URL: ${openaiBaseUrl || 'default'}`);
+    logger.info(`[Config] OpenAI Model: ${openaiModel}`);
+
+    // Create ProviderManager and register OpenAI provider
+    const providerManager = new ProviderManager();
+    const openaiProvider = new OpenAIProvider(openaiApiKey, openaiBaseUrl, {
+      defaultModel: openaiModel,
+      getEphemeralSettings: () => config.getEphemeralSettings(),
+    });
+    providerManager.registerProvider(openaiProvider);
+    providerManager.setActiveProvider('openai');
+
+    // Set provider manager on config
+    config.setProviderManager(providerManager);
+
+    await config.refreshAuth(AuthType.USE_PROVIDER);
   } else {
     logger.error(
-      `[Config] Unable to set GeneratorConfig. Please provide a GEMINI_API_KEY or set USE_CCPA.`,
+      `[Config] Unable to set GeneratorConfig. Please provide a GEMINI_API_KEY, OPENAI_API_KEY, or set USE_CCPA.`,
     );
   }
 
